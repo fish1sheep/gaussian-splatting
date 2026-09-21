@@ -47,16 +47,23 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
+    
+    # 1. 高斯椭球类初始化
     gaussians = GaussianModel(dataset.sh_degree, opt.optimizer_type)
+    # 2. 场景初始化：colmap数据集读取，高斯椭球初始化
     scene = Scene(dataset, gaussians)
+    # 3. 高斯椭球集训练设置
     gaussians.training_setup(opt)
+    # 断点续训
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
         gaussians.restore(model_params, opt)
-
+    
+    # 设置背景颜色 
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
+    # 测量GPU计算时间
     iter_start = torch.cuda.Event(enable_timing = True)
     iter_end = torch.cuda.Event(enable_timing = True)
 
@@ -68,8 +75,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     ema_loss_for_log = 0.0
     ema_Ll1depth_for_log = 0.0
 
+    # 设置进度条
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
+    # 开始循环迭代
     for iteration in range(first_iter, opt.iterations + 1):
         if network_gui.conn == None:
             network_gui.try_connect()
@@ -87,14 +96,18 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 network_gui.conn = None
 
         iter_start.record()
-
+        
+        # 1. 高斯椭球更新学习率
         gaussians.update_learning_rate(iteration)
 
         # Every 1000 its we increase the levels of SH up to a maximum degree
+        # 每1000词增加球谐函数阶数，直至到达最大球谐函数阶数
+        # 2. 调节球谐系数阶数
         if iteration % 1000 == 0:
             gaussians.oneupSHdegree()
 
         # Pick a random Camera
+        # 3. 随机选取一个相机视角
         if not viewpoint_stack:
             viewpoint_stack = scene.getTrainCameras().copy()
             viewpoint_indices = list(range(len(viewpoint_stack)))
@@ -106,8 +119,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if (iteration - 1) == debug_from:
             pipe.debug = True
 
+        # 4. 加载设定背景颜色
         bg = torch.rand((3), device="cuda") if opt.random_background else background
-
+        # 5. 高斯点云光栅化渲染
         render_pkg = render(viewpoint_cam, gaussians, pipe, bg, use_trained_exp=dataset.train_test_exp, separate_sh=SPARSE_ADAM_AVAILABLE)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
 
@@ -116,6 +130,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             image *= alpha_mask
 
         # Loss
+        # 6. 计算损失 梯度反向传播
         gt_image = viewpoint_cam.original_image.cuda()
         Ll1 = l1_loss(image, gt_image)
         if FUSED_SSIM_AVAILABLE:
@@ -161,19 +176,29 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 scene.save(iteration)
 
             # Densification
+            # 7. 自适应密度控制
+            ## 1. 检查迭代次数是否小于 opt.densify_until_iter =15000
             if iteration < opt.densify_until_iter:
                 # Keep track of max radii in image-space for pruning
+                # 更新高斯空间中 可见高斯分布的最大半径 用于后续剪枝
                 gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
                 gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
 
+                # 2.如果迭代次数大于 opt.opt.densify_from_iter = 500
+                # 且迭代次数整除致密化间隔 opt.densification_interval = 
                 if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
                     size_threshold = 20 if iteration > opt.opacity_reset_interval else None
-                    gaussians.densify_and_prune(opt.densify_grad_threshold, 0.005, scene.cameras_extent, size_threshold, radii)
+                    # gaussians 致密化或者剪枝
+                    gaussians.densify_and_prune(opt.densify_grad_threshold,     # 稠密化梯度阈值
+                            0.005, scene.cameras_extent,    # 最大高斯半径
+                            size_threshold, radii)          # 尺寸阈值
                 
                 if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
+                    # 重置不透明度
                     gaussians.reset_opacity()
 
             # Optimizer step
+            # 8. 优化器更新参数
             if iteration < opt.iterations:
                 gaussians.exposure_optimizer.step()
                 gaussians.exposure_optimizer.zero_grad(set_to_none = True)
@@ -254,6 +279,7 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
 if __name__ == "__main__":
     # Set up command line argument parser
     parser = ArgumentParser(description="Training script parameters")
+    # 设置模型参数、优化参数、管道参数
     lp = ModelParams(parser)
     op = OptimizationParams(parser)
     pp = PipelineParams(parser)
@@ -261,8 +287,11 @@ if __name__ == "__main__":
     parser.add_argument('--port', type=int, default=6009)
     parser.add_argument('--debug_from', type=int, default=-1)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
+
+    #在这里设置测试迭代次数 和 保存次数
     parser.add_argument("--test_iterations", nargs="+", type=int, default=[7_000, 30_000])
     parser.add_argument("--save_iterations", nargs="+", type=int, default=[7_000, 30_000])
+
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument('--disable_viewer', action='store_true', default=False)
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
@@ -277,8 +306,11 @@ if __name__ == "__main__":
 
     # Start GUI server, configure and run training
     if not args.disable_viewer:
+        # 设置GUI服务器ip地址和port端口号
         network_gui.init(args.ip, args.port)
+    # 设置Pytorch自动求导机制中的异常检测功能，决定是否开启异常检测
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
+
     training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from)
 
     # All done

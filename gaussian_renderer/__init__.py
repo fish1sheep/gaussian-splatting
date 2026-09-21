@@ -23,6 +23,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     """
  
     # Create zero tensor. We will use it to make pytorch return gradients of the 2D (screen-space) means
+    # 创建一个张量，计算2D屏幕空间坐标的平均值的梯度 形状和pc.get_xyz相同
     screenspace_points = torch.zeros_like(pc.get_xyz, dtype=pc.get_xyz.dtype, requires_grad=True, device="cuda") + 0
     try:
         screenspace_points.retain_grad()
@@ -30,38 +31,44 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         pass
 
     # Set up rasterization configuration
+    # 获取相机的水平视角的半正切值和垂直视角的半正切值，用来计算投影矩阵
     tanfovx = math.tan(viewpoint_camera.FoVx * 0.5)
     tanfovy = math.tan(viewpoint_camera.FoVy * 0.5)
 
+    # 高斯光栅化设置
     raster_settings = GaussianRasterizationSettings(
-        image_height=int(viewpoint_camera.image_height),
-        image_width=int(viewpoint_camera.image_width),
-        tanfovx=tanfovx,
-        tanfovy=tanfovy,
-        bg=bg_color,
-        scale_modifier=scaling_modifier,
-        viewmatrix=viewpoint_camera.world_view_transform,
-        projmatrix=viewpoint_camera.full_proj_transform,
-        sh_degree=pc.active_sh_degree,
-        campos=viewpoint_camera.camera_center,
+        image_height=int(viewpoint_camera.image_height),    # 图像高度
+        image_width=int(viewpoint_camera.image_width),      # 图像宽度
+        tanfovx=tanfovx,                                    # 水平视角的半正切值
+        tanfovy=tanfovy,                                    # 垂直视角的半正切值
+        bg=bg_color,                                        # 背景颜色
+        scale_modifier=scaling_modifier,                    # 缩放因子
+        viewmatrix=viewpoint_camera.world_view_transform,   # 视图矩阵（世界坐标系转换到相机坐标系）
+        projmatrix=viewpoint_camera.full_proj_transform,    # 投影矩阵（相机坐标系转换到像素坐标系）
+        sh_degree=pc.active_sh_degree,                      # 已激活球谐函数阶数
+        campos=viewpoint_camera.camera_center,              # 相机位置
         prefiltered=False,
         debug=pipe.debug,
         antialiasing=pipe.antialiasing
     )
 
+    # 光栅化实例
     rasterizer = GaussianRasterizer(raster_settings=raster_settings)
 
+    # 3D点的位置，2D坐标，透明度
     means3D = pc.get_xyz
     means2D = screenspace_points
     opacity = pc.get_opacity
 
     # If precomputed 3d covariance is provided, use it. If not, then it will be computed from
     # scaling / rotation by the rasterizer.
+    # 如果3D协方差矩阵提前计算，使用它；否则，它将从缩放 / 旋转计算而来
     scales = None
     rotations = None
     cov3D_precomp = None
 
     if pipe.compute_cov3D_python:
+        # 计算三维协方差矩阵
         cov3D_precomp = pc.get_covariance(scaling_modifier)
     else:
         scales = pc.get_scaling
@@ -69,10 +76,20 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
 
     # If precomputed colors are provided, use them. Otherwise, if it is desired to precompute colors
     # from SHs in Python, do it. If not, then SH -> RGB conversion will be done by rasterizer.
+    # 如果颜色被提供，使用它们
+    # 否则，如果希望在Python中从SHs预计算颜色，则执行此操作
     shs = None
     colors_precomp = None
     if override_color is None:
-        if pipe.convert_SHs_python:
+        if pipe.convert_SHs_python: # False 跳过不执行
+            # 计算颜色
+            """
+            1. 重新排列pc.get_features的顺序，使其与SHs系数一致
+            2. dir_pp 计算相机中心每个点的方向向量
+            3. dir_pp_normalized 是将方向向量单位化
+            4. 借助 shs_view 球谐函数系数+ dir_pp_normalized 单位方向向量+ eval_sh 计算颜色值
+            5. 将计算的RGB颜色值加0.5,范围从[-1,1]转换到[0,1]空间
+            """
             shs_view = pc.get_features.transpose(1, 2).view(-1, 3, (pc.max_sh_degree+1)**2)
             dir_pp = (pc.get_xyz - viewpoint_camera.camera_center.repeat(pc.get_features.shape[0], 1))
             dir_pp_normalized = dir_pp/dir_pp.norm(dim=1, keepdim=True)
@@ -87,17 +104,18 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         colors_precomp = override_color
 
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 
+    # 3d高斯 光栅化图像 渲染， 并获取它们在图像上的半径
     if separate_sh:
         rendered_image, radii, depth_image = rasterizer(
-            means3D = means3D,
-            means2D = means2D,
-            dc = dc,
-            shs = shs,
-            colors_precomp = colors_precomp,
-            opacities = opacity,
-            scales = scales,
-            rotations = rotations,
-            cov3D_precomp = cov3D_precomp)
+            means3D = means3D,                  # 3D高斯分布均值
+            means2D = means2D,                  # 2D高斯分布矩阵
+            dc = dc,                            
+            shs = shs,                          # 球谐函数系数特征
+            colors_precomp = colors_precomp,    # 预处理颜色张量
+            opacities = opacity,                # 透明度
+            scales = scales,                    # 尺度缩放因子
+            rotations = rotations,              # 旋转矩阵
+            cov3D_precomp = cov3D_precomp)      # 预处理三维协方差矩阵
     else:
         rendered_image, radii, depth_image = rasterizer(
             means3D = means3D,

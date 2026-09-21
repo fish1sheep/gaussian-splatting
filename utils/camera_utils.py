@@ -17,6 +17,7 @@ import cv2
 
 WARNED = False
 
+# 与PDF解释文档代码不同
 def loadCam(args, id, cam_info, resolution_scale, is_nerf_synthetic, is_test_dataset):
     image = Image.open(cam_info.image_path)
 
@@ -42,6 +43,9 @@ def loadCam(args, id, cam_info, resolution_scale, is_nerf_synthetic, is_test_dat
     orig_w, orig_h = image.size
     if args.resolution in [1, 2, 4, 8]:
         resolution = round(orig_w/(resolution_scale * args.resolution)), round(orig_h/(resolution_scale * args.resolution))
+    
+    # 计算目标分辨率
+    # 这里 args.resolution = -1
     else:  # should be a type that converts to float
         if args.resolution == -1:
             if orig_w > 1600:

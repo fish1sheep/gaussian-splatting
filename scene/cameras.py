@@ -26,10 +26,10 @@ class Camera(nn.Module):
 
         self.uid = uid
         self.colmap_id = colmap_id
-        self.R = R
-        self.T = T
-        self.FoVx = FoVx
-        self.FoVy = FoVy
+        self.R = R          # 旋转矩阵
+        self.T = T          # 平移向量
+        self.FoVx = FoVx    # 水平方向的视场角
+        self.FoVy = FoVy    # 垂直方向的视场角
         self.image_name = image_name
 
         try:
@@ -80,12 +80,16 @@ class Camera(nn.Module):
         self.zfar = 100.0
         self.znear = 0.01
 
-        self.trans = trans
-        self.scale = scale
+        self.trans = trans      # 平移向量
+        self.scale = scale      # 缩放因子
 
+        # 视图矩阵 世界坐标系变换到相机坐标系的变换矩阵
         self.world_view_transform = torch.tensor(getWorld2View2(R, T, trans, scale)).transpose(0, 1).cuda()
+        # 投影矩阵 根据相机的近平面距离、远平面距离、水平视场角和垂直视场角计算投影矩阵
         self.projection_matrix = getProjectionMatrix(znear=self.znear, zfar=self.zfar, fovX=self.FoVx, fovY=self.FoVy).transpose(0,1).cuda()
+        # 完整的投影变换矩阵
         self.full_proj_transform = (self.world_view_transform.unsqueeze(0).bmm(self.projection_matrix.unsqueeze(0))).squeeze(0)
+        # 相机中心
         self.camera_center = self.world_view_transform.inverse()[3, :3]
         
 class MiniCam:

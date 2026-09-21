@@ -189,10 +189,12 @@ def read_extrinsics_binary(path_to_model_file):
         for _ in range(num_reg_images):
             binary_image_properties = read_next_bytes(
                 fid, num_bytes=64, format_char_sequence="idddddddi")
+            # 图像ID 四元式表示的旋转向量 平移向量 相机ID
             image_id = binary_image_properties[0]
             qvec = np.array(binary_image_properties[1:5])
             tvec = np.array(binary_image_properties[5:8])
             camera_id = binary_image_properties[8]
+            # 图像名称
             image_name = ""
             current_char = read_next_bytes(fid, 1, "c")[0]
             while current_char != b"\x00":   # look for the ASCII 0 entry
@@ -224,19 +226,22 @@ def read_intrinsics_binary(path_to_model_file):
         for _ in range(num_cameras):
             camera_properties = read_next_bytes(
                 fid, num_bytes=24, format_char_sequence="iiQQ")
+            # 相机ID 模型相机的名称 图像宽高
             camera_id = camera_properties[0]
             model_id = camera_properties[1]
             model_name = CAMERA_MODEL_IDS[camera_properties[1]].model_name
             width = camera_properties[2]
             height = camera_properties[3]
             num_params = CAMERA_MODEL_IDS[model_id].num_params
+
+            # 相机内参 后面有所体现
             params = read_next_bytes(fid, num_bytes=8*num_params,
                                      format_char_sequence="d"*num_params)
             cameras[camera_id] = Camera(id=camera_id,
                                         model=model_name,
-                                        width=width,
-                                        height=height,
-                                        params=np.array(params))
+                                        width=width,    # 相机图像宽度
+                                        height=height,  # 相机图像高度
+                                        params=np.array(params))    # 相机内参
         assert len(cameras) == num_cameras
     return cameras
 

@@ -111,6 +111,7 @@ def eval_sh(deg, sh, dirs):
                             C4[8] * (xx * (xx - 3 * yy) - yy * (3 * xx - yy)) * sh[..., 24])
     return result
 
+# 设置球谐函数第一维度
 def RGB2SH(rgb):
     return (rgb - 0.5) / C0
 

@@ -30,16 +30,19 @@ class Scene:
         self.loaded_iter = None
         self.gaussians = gaussians
 
+        # 是否迭代 第一次执行load_iteration为None，直接跳过
         if load_iteration:
-            if load_iteration == -1:
+            if load_iteration == -1:    # 寻找最大迭代路径
                 self.loaded_iter = searchForMaxIteration(os.path.join(self.model_path, "point_cloud"))
             else:
                 self.loaded_iter = load_iteration
             print("Loading trained model at iteration {}".format(self.loaded_iter))
 
+        # 我们的训练相机集，测试集
         self.train_cameras = {}
         self.test_cameras = {}
 
+        # 读取colmap数据集
         if os.path.exists(os.path.join(args.source_path, "sparse")):
             scene_info = sceneLoadTypeCallbacks["Colmap"](args.source_path, args.images, args.depths, args.eval, args.train_test_exp)
         elif os.path.exists(os.path.join(args.source_path, "transforms_train.json")):
@@ -49,6 +52,7 @@ class Scene:
             assert False, "Could not recognize scene type!"
 
         if not self.loaded_iter:
+            # 将场景信息写入input.ply文件并保存
             with open(scene_info.ply_path, 'rb') as src_file, open(os.path.join(self.model_path, "input.ply") , 'wb') as dest_file:
                 dest_file.write(src_file.read())
             json_cams = []
@@ -57,11 +61,14 @@ class Scene:
                 camlist.extend(scene_info.test_cameras)
             if scene_info.train_cameras:
                 camlist.extend(scene_info.train_cameras)
+
+            # 将场景中的相机信息整理出json格式，并保存到camera.json文件中
             for id, cam in enumerate(camlist):
                 json_cams.append(camera_to_JSON(id, cam))
             with open(os.path.join(self.model_path, "cameras.json"), 'w') as file:
                 json.dump(json_cams, file)
-
+        
+        # 随机打乱
         if shuffle:
             random.shuffle(scene_info.train_cameras)  # Multi-res consistent random shuffling
             random.shuffle(scene_info.test_cameras)  # Multi-res consistent random shuffling
@@ -79,8 +86,10 @@ class Scene:
                                                            "point_cloud",
                                                            "iteration_" + str(self.loaded_iter),
                                                            "point_cloud.ply"), args.train_test_exp)
-        else:
-            self.gaussians.create_from_pcd(scene_info.point_cloud, scene_info.train_cameras, self.cameras_extent)
+        else:   # 执行的是这一个
+            self.gaussians.create_from_pcd(scene_info.point_cloud,  # 场景信息中的点云
+                scene_info.train_cameras,   # 训练数据相机视角
+                self.cameras_extent)        # 半径
 
     def save(self, iteration):
         point_cloud_path = os.path.join(self.model_path, "point_cloud/iteration_{}".format(iteration))

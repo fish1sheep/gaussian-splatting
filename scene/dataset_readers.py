@@ -46,6 +46,7 @@ class SceneInfo(NamedTuple):
     is_nerf_synthetic: bool
 
 def getNerfppNorm(cam_info):
+    # 计算相机平均中心 所有相机中心到平均相机中心的最大距离
     def get_center_and_diag(cam_centers):
         cam_centers = np.hstack(cam_centers)
         avg_cam_center = np.mean(cam_centers, axis=1, keepdims=True)
@@ -55,36 +56,49 @@ def getNerfppNorm(cam_info):
         return center.flatten(), diagonal
 
     cam_centers = []
-
+    # 计算相机中心
     for cam in cam_info:
         W2C = getWorld2View2(cam.R, cam.T)
         C2W = np.linalg.inv(W2C)
         cam_centers.append(C2W[:3, 3:4])
 
+    # 计算半径和平移向量
     center, diagonal = get_center_and_diag(cam_centers)
     radius = diagonal * 1.1
-
+    # 其值为平均相机中心的相反数，用于将场景的中心平移到原点
     translate = -center
 
     return {"translate": translate, "radius": radius}
 
 def readColmapCameras(cam_extrinsics, cam_intrinsics, depths_params, images_folder, depths_folder, test_cam_names_list):
+    """
+    cam_extrinsics：相机外参
+    cam_intrinsics：相机内参
+    images_folder：相机文件路径
+    """
+
+    # 创建一个空列表cam_infos,用于存储每个相机的Camera_Info对象
     cam_infos = []
+    # idx为相机的索引，key为相机的标识符
     for idx, key in enumerate(cam_extrinsics):
         sys.stdout.write('\r')
         # the exact output you're looking for:
         sys.stdout.write("Reading camera {}/{}".format(idx+1, len(cam_extrinsics)))
         sys.stdout.flush()
 
+        # 获取相机外参对象，相机内参对象
+        # 图像的高度，图像的宽度
         extr = cam_extrinsics[key]
         intr = cam_intrinsics[extr.camera_id]
         height = intr.height
         width = intr.width
 
+        # 从内参对象中获取相机的唯一标识符
         uid = intr.id
         R = np.transpose(qvec2rotmat(extr.qvec))
         T = np.array(extr.tvec)
 
+        # 根据相机模型计算视场角
         if intr.model=="SIMPLE_PINHOLE":
             focal_length_x = intr.params[0]
             FovY = focal2fov(focal_length_x, height)
@@ -127,6 +141,8 @@ def fetchPly(path):
 
 def storePly(path, xyz, rgb):
     # Define the dtype for the structured array
+    # f4 表示 np.float32
+    # u1 表示 np.uint8
     dtype = [('x', 'f4'), ('y', 'f4'), ('z', 'f4'),
             ('nx', 'f4'), ('ny', 'f4'), ('nz', 'f4'),
             ('red', 'u1'), ('green', 'u1'), ('blue', 'u1')]
@@ -146,12 +162,16 @@ def readColmapSceneInfo(path, images, depths, eval, train_test_exp, llffhold=8):
     try:
         cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.bin")
         cameras_intrinsic_file = os.path.join(path, "sparse/0", "cameras.bin")
+        # 1. 读取相机外参，每张图像的相机位姿，旋转平移矩阵
         cam_extrinsics = read_extrinsics_binary(cameras_extrinsic_file)
+        # 2. 读取相机内参
         cam_intrinsics = read_intrinsics_binary(cameras_intrinsic_file)
     except:
         cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.txt")
         cameras_intrinsic_file = os.path.join(path, "sparse/0", "cameras.txt")
+        # 1. 读取相机外参，每张图像的相机位姿，旋转平移矩阵
         cam_extrinsics = read_extrinsics_text(cameras_extrinsic_file)
+        # 2. 读取相机内参
         cam_intrinsics = read_intrinsics_text(cameras_intrinsic_file)
 
     depth_params_file = os.path.join(path, "sparse/0", "depth_params.json")
@@ -191,6 +211,7 @@ def readColmapSceneInfo(path, images, depths, eval, train_test_exp, llffhold=8):
         test_cam_names_list = []
 
     reading_dir = "images" if images == None else images
+    # 3. 整合相机外参，内参，形成完整的相机信息列表
     cam_infos_unsorted = readColmapCameras(
         cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, depths_params=depths_params,
         images_folder=os.path.join(path, reading_dir), 
@@ -200,8 +221,10 @@ def readColmapSceneInfo(path, images, depths, eval, train_test_exp, llffhold=8):
     train_cam_infos = [c for c in cam_infos if train_test_exp or not c.is_test]
     test_cam_infos = [c for c in cam_infos if c.is_test]
 
+    # 4. 计算场景中心点，和能够覆盖所有相机位置的半径边长
     nerf_normalization = getNerfppNorm(train_cam_infos)
 
+    # 5. 读取初始化点云
     ply_path = os.path.join(path, "sparse/0/points3D.ply")
     bin_path = os.path.join(path, "sparse/0/points3D.bin")
     txt_path = os.path.join(path, "sparse/0/points3D.txt")
@@ -278,7 +301,7 @@ def readNerfSyntheticInfo(path, white_background, depths, eval, extension=".png"
     print("Reading Test Transforms")
     test_cam_infos = readCamerasFromTransforms(path, "transforms_test.json", depths_folder, white_background, True, extension)
     
-    if not eval:
+    if not eval: # eval = False 跳过
         train_cam_infos.extend(test_cam_infos)
         test_cam_infos = []
 

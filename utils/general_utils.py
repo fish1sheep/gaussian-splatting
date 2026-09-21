@@ -26,6 +26,8 @@ def PILtoTorch(pil_image, resolution):
     else:
         return resized_image.unsqueeze(dim=-1).permute(2, 0, 1)
 
+
+
 def get_expon_lr_func(
     lr_init, lr_final, lr_delay_steps=0, lr_delay_mult=1.0, max_steps=1000000
 ):
@@ -75,11 +77,14 @@ def strip_lowerdiag(L):
 def strip_symmetric(sym):
     return strip_lowerdiag(sym)
 
-def build_rotation(r):
-    norm = torch.sqrt(r[:,0]*r[:,0] + r[:,1]*r[:,1] + r[:,2]*r[:,2] + r[:,3]*r[:,3])
+def build_rotation(r):  # 根据四元数 构建 旋转矩阵
 
+    # 输入的每个四元数，计算其范数
+    norm = torch.sqrt(r[:,0]*r[:,0] + r[:,1]*r[:,1] + r[:,2]*r[:,2] + r[:,3]*r[:,3])
+    # 将输入的四元数归一化处理
     q = r / norm[:, None]
 
+    # 根据四元数求算旋转矩阵
     R = torch.zeros((q.size(0), 3, 3), device='cuda')
 
     r = q[:, 0]
@@ -100,12 +105,17 @@ def build_rotation(r):
 
 def build_scaling_rotation(s, r):
     L = torch.zeros((s.shape[0], 3, 3), dtype=torch.float, device="cuda")
+    # 构建旋转矩阵
     R = build_rotation(r)
 
+    #将每个对象在第一个维度(例如x方向)的缩放因子设置到矩阵L 的第一行第一列元素上。
+    #将每个对象在第二个维度(例如y方向)的缩放因子设置到矩阵L的第二行第二列元素上。
+    # 将每个对象在第三个维度(例如z 方向)的缩放因子设置到矩阵L的第三行第三列元素上。
     L[:,0,0] = s[:,0]
     L[:,1,1] = s[:,1]
     L[:,2,2] = s[:,2]
 
+    # 矩阵乘法 L矩阵包含旋转信息和缩放信息
     L = R @ L
     return L
 
@@ -126,7 +136,7 @@ def safe_state(silent):
             old_f.flush()
 
     sys.stdout = F(silent)
-
+    # 设置随机种子 和 显卡
     random.seed(0)
     np.random.seed(0)
     torch.manual_seed(0)
